@@ -408,8 +408,30 @@ class Interfaz:
         else:
             messagebox.showwarning("Sin saldo suficiente", "No tienes suficiente saldo para duplicar la apuesta.")
 
+
+
     def plantarse(self):
-        threading.Thread(target=self._resolver_crupier, daemon=True).start()
+        self.lbl_estado.config(text="Turno del crupier...")
+        self.juego.turno_crupier_async(callback=self._post_turno_crupier)
+        print("Ejecutar turno crupier en hilo, y luego actualizar interfaz con after")
+        thread_id = threading.current_thread().ident
+        print(f"ID del hilo: {thread_id}")
+
+    def _post_turno_crupier(self):
+        self.ventana.after(0, self._actualizar_despues_crupier)
+        print("Esta función corre en hilo distinto, usamos after para interactuar con Tkinter")
+        thread_id = threading.current_thread().ident
+        print(f"ID del hilo: {thread_id}")
+
+    def _actualizar_despues_crupier(self):
+        resultado = self.juego.resultado()
+        self.actualizar_manos()
+        self.lbl_estado.config(text=resultado)
+        print("Guardar partida en hilo sin bloquear la UI")
+        thread_id = threading.current_thread().ident
+        print(f"ID del hilo: {thread_id}")
+        self.finalizar_partida(resultado)  # <-- llamada directa aquí
+        self.fin_turno()
 
     def _resolver_crupier(self):
         self.juego.turno_crupier()
@@ -429,20 +451,27 @@ class Interfaz:
     def finalizar_partida(self, resultado):
         if resultado == "Ganaste":
             self.saldo += 2 * self.juego.apuesta
+            print(f"[DEBUG] Ganaste. Nuevo saldo: {self.saldo:.2f}")
         elif resultado == "Empate":
             self.saldo += self.juego.apuesta
+            print(f"[DEBUG] Empate. Nuevo saldo: {self.saldo:.2f}")
+        else:
+            print(f"[DEBUG] Perdiste. Saldo se mantiene en: {self.saldo:.2f}")
 
-        # Actualizar saldo y estadísticas del usuario en la base de datos
+        # Actualizar saldo y estadísticas en BD
         if self.usuario_id:
             usuario = obtener_usuario(self.usuario_id)
             if usuario:
-                manos = usuario[3] + 1          # índice corregido
+                manos = usuario[3] + 1
                 victorias = usuario[4] + (1 if resultado == "Ganaste" else 0)
                 derrotas = usuario[5] + (1 if resultado == "Perdiste" else 0)
-                saldo = int(self.saldo)
-                actualizar_usuario(self.usuario_id, manos, victorias, derrotas, saldo)
+                saldo_db = int(self.saldo)
+                print(f"[DEBUG] Actualizando BD: manos={manos}, victorias={victorias}, derrotas={derrotas}, saldo={saldo_db}")
+                actualizar_usuario(self.usuario_id, manos, victorias, derrotas, saldo_db)
 
         self.lbl_saldo.config(text=f"Saldo: ${self.saldo:.2f}")
+
+
 
 
     def nueva_partida(self):

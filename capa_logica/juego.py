@@ -1,3 +1,4 @@
+import threading
 from .mazo import Mazo
 from .jugador import Jugador
 from .crupier import Crupier
@@ -81,3 +82,10 @@ class Juego:
         elif resultado == "Perdiste":
             ganancia = -self.apuesta
         guardar_partida(self.jugador.nombre, resultado, self.apuesta, ganancia, datetime.now())
+
+    def turno_crupier_async(self, callback=None):
+        def target():
+            self.turno_crupier()
+            if callback:
+                callback()
+        threading.Thread(target=target, daemon=True).start()
