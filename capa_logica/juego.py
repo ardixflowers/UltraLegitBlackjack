@@ -44,7 +44,19 @@ class Juego:
         return calcular_valor(self.jugador.mano) > 21
 
     def turno_crupier(self):
-        while calcular_valor(self.crupier.mano) < 17:
+        puntos_jugador = calcular_valor(self.jugador.mano)
+        while True:
+            puntos_crupier = calcular_valor(self.crupier.mano)
+            # Si el crupier iguala al jugador y no se pasa, se planta
+            if puntos_crupier == puntos_jugador and puntos_crupier >= 17:
+                break
+            # Si el crupier supera al jugador y tiene al menos 17, se planta
+            if puntos_crupier > puntos_jugador and puntos_crupier >= 17:
+                break
+            # Si el crupier se pasa, termina
+            if puntos_crupier > 21:
+                break
+            # Si no, sigue pidiendo carta
             self.crupier.recibir_carta(self.mazo.sacar_carta())
 
     def resultado(self):
