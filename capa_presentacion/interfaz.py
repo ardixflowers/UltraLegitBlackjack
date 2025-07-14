@@ -3,7 +3,8 @@ from tkinter import simpledialog, messagebox
 import threading
 from concurrente.hilos import reloj
 from concurrente.procesos import iniciar_procesos
-from multiprocessing import Process
+import time
+
 
 from capa_logica.juego import Juego
 from capa_logica.juego import calcular_valor
@@ -11,17 +12,6 @@ from capa_datos.db import agregar_usuario, obtener_usuario, actualizar_usuario
 
 
 class Interfaz:
-    """Interfaz gráfica con lógica de apuestas corregida.
-
-    -   La apuesta se descuenta del saldo en el momento de repartir.
-    -   El botón "Duplicar" (double‑down) descuenta la misma cantidad de
-        saldo de nuevo y duplica la apuesta.
-    -   El resultado final paga:
-        *   Victoria → se abonan 2× apuesta (se devuelve apuesta + ganancia).
-        *   Empate  → se devuelve la apuesta.
-        *   Derrota → la apuesta ya está descontada, no se resta más.
-    """
-
     def __init__(self):
         self.usuario_id = None
         self.usuario_nombre = None
@@ -33,13 +23,14 @@ class Interfaz:
         self.ventana.title("Blackjack")
         self.ventana.geometry("620x560")
         self.ventana.configure(bg="#1d1f21")
+        self.ventana.attributes('-fullscreen', True)
 
         self.menu_usuario()
 
     def menu_usuario(self):
         self.menu_win = tk.Toplevel(self.ventana)
-        self.menu_win.title("Crear usuario")
-        self.menu_win.geometry("350x200")
+        self.menu_win.title("Crear o ingresar usuario")
+        self.menu_win.geometry("350x250")
         self.menu_win.configure(bg="#23272e")
         self.menu_win.grab_set()
         tk.Label(
@@ -51,46 +42,83 @@ class Interfaz:
         ).pack(pady=10)
         tk.Label(
             self.menu_win,
-            text="Ingrese su nombre de usuario:",
+            text="Nombre de usuario:",
             font=("Arial", 12),
             fg="white",
             bg="#23272e",
         ).pack(pady=5)
         self.entry_nombre = tk.Entry(self.menu_win, font=("Arial", 12))
         self.entry_nombre.pack(pady=5)
+        tk.Label(
+            self.menu_win,
+            text="Contraseña:",
+            font=("Arial", 12),
+            fg="white",
+            bg="#23272e",
+        ).pack(pady=5)
+        self.entry_contrasena = tk.Entry(self.menu_win, font=("Arial", 12), show="*")
+        self.entry_contrasena.pack(pady=5)
         tk.Button(
             self.menu_win,
-            text="Crear usuario",
+            text="Ingresar",
             font=("Arial", 12, "bold"),
             bg="#3e8e41",
             fg="white",
-            command=self.crear_usuario,
+            command=self.ingresar_usuario,
         ).pack(pady=10)
 
-    def crear_usuario(self):
+
+    def ingresar_usuario(self):
+        threading.Thread(target=self._login_usuario, daemon=True).start()
+
+    def _login_usuario(self):
         nombre = self.entry_nombre.get().strip()
-        if not nombre:
-            messagebox.showwarning("Nombre requerido", "Debe ingresar un nombre de usuario.")
+        contrasena = self.entry_contrasena.get().strip()
+        if not nombre or not contrasena:
+            self.ventana.after(0, lambda: messagebox.showwarning("Datos requeridos", "Debe ingresar nombre de usuario y contraseña."))
             return
-        # Obtener el id_usuario máximo REAL desde la base MySQL
-        from capa_datos.db import get_conn
-        with get_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT MAX(id_usuario) FROM usuario")
-            row = cursor.fetchone()
-            nuevo_id = (row[0] or 0) + 1
-        # Crear usuario en la base de datos con id y saldo inicial
-        agregar_usuario(nuevo_id, manos=0, victorias=0, derrotas=0, saldo=1000)
-        self.usuario_id = nuevo_id
-        self.usuario_nombre = nombre
-        self.saldo = 1000
-        self.menu_win.destroy()
-        self.iniciar_interfaz_juego()
+
+        from capa_datos.db import get_conn, agregar_usuario
+        try:
+            with get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(usuario)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if not all(col in columns for col in ("nombre", "contrasena", "manos", "victorias", "derrotas", "saldo", "id_usuario")):
+                    self.ventana.after(0, lambda: messagebox.showerror(
+                        "Error de base de datos",
+                        "La tabla 'usuario' no tiene las columnas requeridas.\n"
+                        "Elimina el archivo blackjack.db y vuelve a crear la base de datos."
+                    ))
+                    self.ventana.after(0, self.ventana.destroy)
+                    return
+
+                cursor.execute("SELECT * FROM usuario WHERE nombre=?", (nombre,))
+                usuario = cursor.fetchone()
+                if usuario:
+                    if usuario[2] == contrasena:
+                        self.usuario_id = usuario[0]
+                        self.usuario_nombre = usuario[1]
+                        self.saldo = usuario[6]
+                    else:
+                        self.ventana.after(0, lambda: messagebox.showerror("Contraseña incorrecta", "La contraseña es incorrecta."))
+                        return
+                else:
+                    self.usuario_id = nombre
+                    self.usuario_nombre = nombre
+                    self.saldo = 1000
+                    agregar_usuario(nombre, nombre, contrasena, manos=0, victorias=0, derrotas=0, saldo=1000)
+            # Abrir interfaz de juego desde el hilo principal
+            self.ventana.after(0, lambda: [self.menu_win.destroy(), self.iniciar_interfaz_juego()])
+        except Exception as e:
+            self.ventana.after(0, lambda: messagebox.showerror("Error de base de datos", f"Ocurrió un error: {e}"))
+            self.ventana.after(0, self.ventana.destroy)
+
 
     def iniciar_interfaz_juego(self):
         tk.Label(
             self.ventana,
-            text="🎴 Blackjack",
+            text=f"🎴 Blackjack - Usuario: {self.usuario_nombre}",
             font=("Arial", 20, "bold"),
             fg="white",
             bg="#1d1f21",
@@ -381,9 +409,15 @@ class Interfaz:
             messagebox.showwarning("Sin saldo suficiente", "No tienes suficiente saldo para duplicar la apuesta.")
 
     def plantarse(self):
-        """Turno del crupier y resolver ronda."""
+        threading.Thread(target=self._resolver_crupier, daemon=True).start()
+
+    def _resolver_crupier(self):
         self.juego.turno_crupier()
         resultado = self.juego.resultado()
+        time.sleep(1.2)  # Simula pensar
+        self.ventana.after(0, lambda: self._mostrar_resultado(resultado))
+
+    def _mostrar_resultado(self, resultado):
         self.actualizar_manos()
         self.lbl_estado.config(text=resultado)
         self.finalizar_partida(resultado)
@@ -397,17 +431,19 @@ class Interfaz:
             self.saldo += 2 * self.juego.apuesta
         elif resultado == "Empate":
             self.saldo += self.juego.apuesta
+
         # Actualizar saldo y estadísticas del usuario en la base de datos
         if self.usuario_id:
-            # Obtener datos actuales
             usuario = obtener_usuario(self.usuario_id)
             if usuario:
-                manos = usuario[1] + 1
-                victorias = usuario[2] + (1 if resultado == "Ganaste" else 0)
-                derrotas = usuario[3] + (1 if resultado == "Perdiste" else 0)
+                manos = usuario[3] + 1          # índice corregido
+                victorias = usuario[4] + (1 if resultado == "Ganaste" else 0)
+                derrotas = usuario[5] + (1 if resultado == "Perdiste" else 0)
                 saldo = int(self.saldo)
                 actualizar_usuario(self.usuario_id, manos, victorias, derrotas, saldo)
+
         self.lbl_saldo.config(text=f"Saldo: ${self.saldo:.2f}")
+
 
     def nueva_partida(self):
         # Limpiar manos y puntajes
@@ -420,7 +456,7 @@ class Interfaz:
         self.entry_apuesta.delete(0, tk.END)
         self.btn_repartir.config(state="normal")
         self.btn_nueva_partida.config(state="disabled")
-        # Opcional: reiniciar el objeto Juego si quieres barajar de nuevo
+        # se reinicia el objeto juego para barajar de nuevo
         self.juego = Juego()
 
     def ejecutar(self):
@@ -434,5 +470,3 @@ class Interfaz:
     def ejecutar(self):
         self.ventana.mainloop()
         self.juego = Juego()
-
-

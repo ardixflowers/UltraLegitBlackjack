@@ -19,6 +19,3 @@ def iniciar_procesos():
             p = Process(target=ejecutar_modulo, args=(ruta,))
             p.start()
             procesos.append(p)
-    # Opcional: esperar a que terminen
-    # for p in procesos:
-    #     p.join()
